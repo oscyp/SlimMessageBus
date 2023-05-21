@@ -7,5 +7,8 @@ global using Moq;
 
 global using SlimMessageBus.Host;
 global using SlimMessageBus.Host.Serialization;
+global using SlimMessageBus.Host.Interceptor;
 
 global using Xunit;
+
+

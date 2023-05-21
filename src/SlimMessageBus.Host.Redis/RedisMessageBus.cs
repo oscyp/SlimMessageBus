@@ -129,7 +129,7 @@ public class RedisMessageBus : MessageBusBase<RedisMessageBusSettings>
         _logger.LogInformation("Creating consumers");
         foreach (var ((path, pathKind), consumerSettings) in Settings.Consumers.GroupBy(x => (x.Path, x.PathKind)).ToDictionary(x => x.Key, x => x.ToList()))
         {
-            IMessageProcessor<MessageWithHeaders> processor = new ConsumerInstanceMessageProcessor<MessageWithHeaders>(consumerSettings, this, MessageProvider, path);
+            IMessageProcessor<MessageWithHeaders> processor = new MessageProcessor<MessageWithHeaders>(consumerSettings, this, MessageProvider, path, responseProducer: this);
 
             var instances = consumerSettings.Max(x => x.Instances);
             if (instances > 1)
@@ -169,11 +169,11 @@ public class RedisMessageBus : MessageBusBase<RedisMessageBusSettings>
 
             if (Settings.RequestResponse.PathKind == PathKind.Topic)
             {
-                AddTopicConsumer(Settings.RequestResponse.Path, subscriber, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messageProvider: m => m.Payload));
+                AddTopicConsumer(Settings.RequestResponse.Path, subscriber, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload));
             }
             else
             {
-                queues.Add((Settings.RequestResponse.Path, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messageProvider: m => m.Payload)));
+                queues.Add((Settings.RequestResponse.Path, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload)));
             }
         }
 

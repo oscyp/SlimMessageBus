@@ -13,6 +13,7 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
     private TopicPartitionOffset _lastOffset;
     private TopicPartitionOffset _lastCheckpointOffset;
     private CancellationTokenSource _cancellationTokenSource;
+    private bool _disposedValue;
 
     protected MessageBusBase MessageBus { get; }
     protected AbstractConsumerSettings[] ConsumerSettings { get; }
@@ -46,26 +47,27 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
 
     protected abstract IMessageProcessor<ConsumeResult<Ignore, byte[]>> CreateMessageProcessor();
 
-    #region IAsyncDisposable
+    #region IDisposable pattern
 
-    public async ValueTask DisposeAsync()
+    protected virtual void Dispose(bool disposing)
     {
-        await DisposeAsyncCore().ConfigureAwait(false);
-        GC.SuppressFinalize(this);
+        if (!_disposedValue)
+        {
+            if (disposing)
+            {
+                _cancellationTokenSource?.Cancel();
+                _cancellationTokenSource?.Dispose();
+                _cancellationTokenSource = null;
+            }
+
+            _disposedValue = true;
+        }
     }
 
-    protected virtual async ValueTask DisposeAsyncCore()
+    public void Dispose()
     {
-        _cancellationTokenSource?.Cancel();
-
-        if (_messageProcessor != null)
-        {
-            await _messageProcessor.DisposeSilently("messageProcessor", _logger);
-            _messageProcessor = null;
-        }
-
-        _cancellationTokenSource?.Dispose();
-        _cancellationTokenSource = null;
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
     }
 
     #endregion

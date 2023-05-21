@@ -144,8 +144,6 @@ public abstract class AsbBaseConsumer : IAsyncDisposable, IConsumerControl
             await _serviceBusSessionProcessor.CloseAsync().ConfigureAwait(false);
             _serviceBusSessionProcessor = null;
         }
-
-        await MessageProcessor.DisposeSilently().ConfigureAwait(false);
     }
 
     #endregion

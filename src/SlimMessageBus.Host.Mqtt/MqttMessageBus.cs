@@ -64,13 +64,13 @@ public class MqttMessageBus : MessageBusBase<MqttMessageBusSettings>
         _logger.LogInformation("Creating consumers");
         foreach (var (path, consumerSettings) in Settings.Consumers.GroupBy(x => x.Path).ToDictionary(x => x.Key, x => x.ToList()))
         {
-            var processor = new ConsumerInstanceMessageProcessor<MqttApplicationMessage>(consumerSettings, this, MessageProvider, path);
+            var processor = new MessageProcessor<MqttApplicationMessage>(consumerSettings, this, MessageProvider, path, responseProducer: this);
             AddTopicConsumer(path, processor);
         }
 
         if (Settings.RequestResponse != null)
         {
-            var processor = new ResponseMessageProcessor<MqttApplicationMessage>(Settings.RequestResponse, this, messageProvider: m => m.Payload);
+            var processor = new ResponseMessageProcessor<MqttApplicationMessage>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload);
             AddTopicConsumer(Settings.RequestResponse.Path, processor);
         }
 

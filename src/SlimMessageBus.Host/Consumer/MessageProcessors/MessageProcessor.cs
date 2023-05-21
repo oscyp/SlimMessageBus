@@ -1,17 +1,21 @@
 ﻿namespace SlimMessageBus.Host;
 
+public delegate Type MessageTypeProvider<in T>(T transportMessage);
+
+public delegate object MessageProvider<in T>(Type messageType, T transportMessage);
+
 /// <summary>
 /// Implementation of <see cref="IMessageProcessor{TMessage}"/> that peforms orchestration around processing of a new message using an instance of the declared consumer (<see cref="IConsumer{TMessage}"/> or <see cref="IRequestHandler{TRequest, TResponse}"/> interface).
 /// </summary>
 /// <typeparam name="TTransportMessage"></typeparam>
-public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandler, IMessageProcessor<TTransportMessage>
+public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProcessor<TTransportMessage>
 {
     private readonly ILogger _logger;
-    private readonly Func<Type, TTransportMessage, object> _messageProvider;
-    private readonly Func<TTransportMessage, Type> _messageTypeProvider;
-    private readonly bool _sendResponses;
+    private readonly MessageProvider<TTransportMessage> _messageProvider;
+    private readonly MessageTypeProvider<TTransportMessage> _messageTypeProvider;
     private readonly bool _shouldFailWhenUnrecognizedMessageType;
     private readonly bool _shouldLogWhenUnrecognizedMessageType;
+    private readonly IResponseProducer _responseProducer;
 
     protected IReadOnlyCollection<AbstractConsumerSettings> _consumerSettings;
     protected IReadOnlyCollection<IMessageTypeConsumerInvokerSettings> _invokers;
@@ -19,17 +23,14 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
 
     public IReadOnlyCollection<AbstractConsumerSettings> ConsumerSettings => _consumerSettings;
 
-    public ConsumerInstanceMessageProcessor(
+    public MessageProcessor(
         IEnumerable<AbstractConsumerSettings> consumerSettings,
         MessageBusBase messageBus,
-        // ToDo: introduce delagate for this
-        Func<Type, TTransportMessage, object> messageProvider,
+        MessageProvider<TTransportMessage> messageProvider,
         string path,
-        // ToDo: introduce delagate for this
-        Action<TTransportMessage, ConsumerContext> consumerContextInitializer = null,
-        bool sendResponses = true,
-        // ToDo: introduce delagate for this
-        Func<TTransportMessage, Type> messageTypeProvider = null)
+        IResponseProducer responseProducer,
+        ConsumerContextIntializer<TTransportMessage> consumerContextInitializer = null,
+        MessageTypeProvider<TTransportMessage> messageTypeProvider = null)
     : base(
         messageBus ?? throw new ArgumentNullException(nameof(messageBus)),
         messageScopeFactory: messageBus,
@@ -40,11 +41,11 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
         path: path,
         consumerContextInitializer == null ? null : (msg, ctx) => consumerContextInitializer((TTransportMessage)msg, ctx))
     {
-        _logger = messageBus.LoggerFactory.CreateLogger<ConsumerInstanceMessageProcessor<TTransportMessage>>();
+        _logger = messageBus.LoggerFactory.CreateLogger<MessageProcessor<TTransportMessage>>();
         _messageProvider = messageProvider ?? throw new ArgumentNullException(nameof(messageProvider));
         _messageTypeProvider = messageTypeProvider;
-        _sendResponses = sendResponses;
         _consumerSettings = (consumerSettings ?? throw new ArgumentNullException(nameof(consumerSettings))).ToList();
+        _responseProducer = responseProducer;
 
         _invokers = consumerSettings.OfType<ConsumerSettings>().SelectMany(x => x.Invokers).ToList();
         _singleInvoker = _invokers.Count == 1 ? _invokers.First() : null;
@@ -52,18 +53,6 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
         _shouldFailWhenUnrecognizedMessageType = consumerSettings.OfType<ConsumerSettings>().Any(x => x.UndeclaredMessageType.Fail);
         _shouldLogWhenUnrecognizedMessageType = consumerSettings.OfType<ConsumerSettings>().Any(x => x.UndeclaredMessageType.Log);
     }
-
-    #region IAsyncDisposable
-
-    public async ValueTask DisposeAsync()
-    {
-        await DisposeAsyncCore().ConfigureAwait(false);
-        GC.SuppressFinalize(this);
-    }
-
-    protected virtual ValueTask DisposeAsyncCore() => new();
-
-    #endregion
 
     public virtual async Task<(Exception Exception, AbstractConsumerSettings ConsumerSettings, object Response, object Message)> ProcessMessage(TTransportMessage transportMessage, IReadOnlyDictionary<string, object> messageHeaders, CancellationToken cancellationToken, IServiceProvider currentServiceProvider = null)
     {
@@ -98,10 +87,13 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
 
                         (lastResponse, lastException, var requestId) = await DoHandle(message, messageHeaders, consumerInvoker, cancellationToken, transportMessage, currentServiceProvider).ConfigureAwait(false);
 
-                        if (consumerInvoker.ParentSettings.ConsumerMode == ConsumerMode.RequestResponse && _sendResponses)
+                        if (consumerInvoker.ParentSettings.ConsumerMode == ConsumerMode.RequestResponse && _responseProducer != null)
                         {
-                            await ProduceResponse(requestId, message, messageHeaders, lastResponse, lastException, consumerInvoker).ConfigureAwait(false);
-                            lastResponse = null;
+                            if (!ReferenceEquals(ResponseForExpiredRequest, lastResponse))
+                            {
+                                // We discard expired requests, so there is no reponse to provide
+                                await _responseProducer.ProduceResponse(requestId, message, messageHeaders, lastResponse, lastException, consumerInvoker).ConfigureAwait(false);
+                            }
                             lastException = null;
                         }
                         else if (lastException != null)
@@ -120,23 +112,9 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
         catch (Exception e)
         {
             _logger.LogDebug(e, "Processing of the message {TransportMessage} failed", transportMessage);
+            lastException = e;
         }
         return (lastException, lastException != null ? lastConsumerInvoker?.ParentSettings : null, lastResponse, message);
-    }
-
-    private async Task ProduceResponse(string requestId, object request, IReadOnlyDictionary<string, object> requestHeaders, object response, Exception responseException, IMessageTypeConsumerInvokerSettings consumerInvoker)
-    {
-        // send the response (or error response)
-        _logger.LogDebug("Serializing the response {Response} of type {MessageType} for RequestId: {RequestId}...", response, consumerInvoker.ParentSettings.ResponseType, requestId);
-
-        var responseHeaders = MessageHeadersFactory.CreateHeaders();
-        responseHeaders.SetHeader(ReqRespMessageHeaders.RequestId, requestId);
-        if (responseException != null)
-        {
-            responseHeaders.SetHeader(ReqRespMessageHeaders.Error, responseException.Message);
-        }
-        // ToDo: refactor, so that we can provide an interface instead
-        await MessageBus.ProduceResponse(request, requestHeaders, response, responseHeaders, consumerInvoker.ParentSettings).ConfigureAwait(false);
     }
 
     protected Type GetMessageType(IReadOnlyDictionary<string, object> headers)
@@ -185,7 +163,7 @@ public class ConsumerInstanceMessageProcessor<TTransportMessage> : MessageHandle
             var found = false;
             foreach (var invoker in _invokers)
             {
-                if (MessageBus.RuntimeTypeCache.IsAssignableFrom(messageType, invoker.MessageType))
+                if (RuntimeTypeCache.IsAssignableFrom(messageType, invoker.MessageType))
                 {
                     found = true;
                     yield return invoker;

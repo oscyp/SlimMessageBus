@@ -110,7 +110,7 @@ public class ServiceBusMessageBus : MessageBusBase<ServiceBusMessageBusSettings>
         foreach (var ((path, pathKind, subscriptionName), consumerSettings) in Settings.Consumers.GroupBy(x => (x.Path, x.PathKind, SubscriptionName: x.GetSubscriptionName(required: false))).ToDictionary(x => x.Key, x => x.ToList()))
         {
             var topicSubscription = new TopicSubscriptionParams(path: path, subscriptionName: subscriptionName);
-            var messageProcessor = new ConsumerInstanceMessageProcessor<ServiceBusReceivedMessage>(consumerSettings, this, messageProvider: (messageType, m) => Serializer.Deserialize(messageType, m.Body.ToArray()), path: path.ToString(), InitConsumerContext);
+            var messageProcessor = new MessageProcessor<ServiceBusReceivedMessage>(consumerSettings, this, messageProvider: (messageType, m) => Serializer.Deserialize(messageType, m.Body.ToArray()), path: path.ToString(), responseProducer: this, InitConsumerContext);
             AddConsumer(topicSubscription, messageProcessor, consumerSettings);
         }
 
@@ -225,14 +225,6 @@ public class ServiceBusMessageBus : MessageBusBase<ServiceBusMessageBusSettings>
         if (headers is null) throw new ArgumentNullException(nameof(headers));
 
         return base.ProduceRequest(request, headers, path, producerSettings);
-    }
-
-    public override Task ProduceResponse(object request, IReadOnlyDictionary<string, object> requestHeaders, object response, IDictionary<string, object> responseHeaders, ConsumerSettings consumerSettings)
-    {
-        if (requestHeaders is null) throw new ArgumentNullException(nameof(requestHeaders));
-        if (consumerSettings is null) throw new ArgumentNullException(nameof(consumerSettings));
-
-        return base.ProduceResponse(consumerSettings.ResponseType, requestHeaders, response, responseHeaders, consumerSettings);
     }
 
     #endregion

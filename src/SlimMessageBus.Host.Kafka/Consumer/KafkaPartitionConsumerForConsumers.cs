@@ -16,7 +16,7 @@ public class KafkaPartitionConsumerForConsumers : KafkaPartitionConsumer
     }
 
     protected override IMessageProcessor<ConsumeResult<Ignore, byte[]>> CreateMessageProcessor()
-        => new ConsumerInstanceMessageProcessor<ConsumeResult>(ConsumerSettings, MessageBus, messageProvider: GetMessageFromTransportMessage, path: TopicPartition.Topic, (m, ctx) => ctx.SetTransportMessage(m));
+        => new MessageProcessor<ConsumeResult>(ConsumerSettings, MessageBus, messageProvider: GetMessageFromTransportMessage, path: TopicPartition.Topic, responseProducer: MessageBus, (m, ctx) => ctx.SetTransportMessage(m));
 
 
     private object GetMessageFromTransportMessage(Type messageType, ConsumeResult transportMessage)

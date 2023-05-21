@@ -45,15 +45,12 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
         // dispose processors
         foreach (var p in _processors.ClearAndSnapshot())
         {
-            await p.DisposeSilently("processor", _logger);
+            p.DisposeSilently("processor", _logger);
         }
 
         // dispose the consumer
-        if (_consumer != null)
-        {
-            _consumer.DisposeSilently("consumer", _logger);
-            _consumer = null;
-        }
+        _consumer?.DisposeSilently("consumer", _logger);
+        _consumer = null;
 
         GC.SuppressFinalize(this);
     }

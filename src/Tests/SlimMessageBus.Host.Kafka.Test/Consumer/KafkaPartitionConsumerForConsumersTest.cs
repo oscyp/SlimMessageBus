@@ -8,7 +8,7 @@ using SlimMessageBus.Host;
 
 using ConsumeResult = Confluent.Kafka.ConsumeResult<Confluent.Kafka.Ignore, byte[]>;
 
-public class KafkaPartitionConsumerForConsumersTest : IAsyncDisposable
+public class KafkaPartitionConsumerForConsumersTest : IDisposable
 {
     private readonly TopicPartition _topicPartition;
     private readonly ILoggerFactory _loggerFactory;
@@ -44,10 +44,9 @@ public class KafkaPartitionConsumerForConsumersTest : IAsyncDisposable
         _subject = new Lazy<KafkaPartitionConsumerForConsumers>(() => new KafkaPartitionConsumerForConsumers(new[] { _consumerBuilder.ConsumerSettings }, group, _topicPartition, _commitControllerMock.Object, massageBusMock.Bus, headerSerializer));
     }
 
-
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        await _subject.Value.DisposeAsync();
+        _subject?.Value.Dispose();
     }
 
     [Fact]

@@ -63,9 +63,9 @@ public class MemoryMessageBus : MessageBusBase<MemoryMessageBusSettings>
     }
 
     private IMessageProcessor<object> CreateMessageProcessor(IEnumerable<ConsumerSettings> consumerSettings, string path)
-        => new ConsumerInstanceMessageProcessor<object>(consumerSettings, this,
+        => new MessageProcessor<object>(consumerSettings, this,
             path: path,
-            sendResponses: false,
+            responseProducer: null,
             messageProvider: ProviderSettings.EnableMessageSerialization
                 ? (messageType, transportMessage) => Serializer.Deserialize(messageType, (byte[])transportMessage)
                 : (messageType, transportMessage) => transportMessage,
@@ -75,6 +75,9 @@ public class MemoryMessageBus : MessageBusBase<MemoryMessageBusSettings>
 
     protected override Task ProduceToTransport(object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders = null, CancellationToken cancellationToken = default)
         => Task.CompletedTask; // Not used
+    
+    public override Task ProduceResponse(string requestId, object request, IReadOnlyDictionary<string, object> requestHeaders, object response, Exception responseException, IMessageTypeConsumerInvokerSettings consumerInvoker)
+        => Task.CompletedTask; // Not used to responses
 
     protected override Task PublishInternal(object message, string path, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken, ProducerSettings producerSettings, IServiceProvider currentServiceProvider)
         => ProduceInternal<object>(message, path, messageHeaders, currentServiceProvider, cancellationToken);

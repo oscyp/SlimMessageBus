@@ -14,7 +14,7 @@ public abstract class MessageBusBase<TProviderSettings> : MessageBusBase where T
     }
 }
 
-public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMessageBus, IMessageScopeFactory, IMessageHeadersFactory, ICurrentTimeProvider
+public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMessageBus, IMessageScopeFactory, IMessageHeadersFactory, ICurrentTimeProvider, IResponseProducer
 {
     private readonly ILogger _logger;
     private CancellationTokenSource _cancellationTokenSource = new();
@@ -563,11 +563,20 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         return ProduceToTransport(request, path, requestPayload, requestHeaders);
     }
 
-    public virtual Task ProduceResponse(object request, IReadOnlyDictionary<string, object> requestHeaders, object response, IDictionary<string, object> responseHeaders, ConsumerSettings consumerSettings)
+    public virtual Task ProduceResponse(string requestId, object request, IReadOnlyDictionary<string, object> requestHeaders, object response, Exception responseException, IMessageTypeConsumerInvokerSettings consumerInvoker)
     {
         if (requestHeaders == null) throw new ArgumentNullException(nameof(requestHeaders));
-        if (responseHeaders == null) throw new ArgumentNullException(nameof(responseHeaders));
-        if (consumerSettings == null) throw new ArgumentNullException(nameof(consumerSettings));
+        if (consumerInvoker == null) throw new ArgumentNullException(nameof(consumerInvoker));
+
+        var responseType = consumerInvoker.ParentSettings.ResponseType;
+        _logger.LogDebug("Sending the response {Response} of type {MessageType} for RequestId: {RequestId}...", response, responseType, requestId);
+
+        var responseHeaders = CreateHeaders();
+        responseHeaders.SetHeader(ReqRespMessageHeaders.RequestId, requestId);
+        if (responseException != null)
+        {
+            responseHeaders.SetHeader(ReqRespMessageHeaders.Error, responseException.Message);
+        }
 
         if (!requestHeaders.TryGetHeader(ReqRespMessageHeaders.ReplyTo, out object replyTo))
         {
@@ -577,7 +586,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         AddMessageTypeHeader(response, responseHeaders);
 
         var responsePayload = response != null
-            ? Serializer.Serialize(consumerSettings.ResponseType, response)
+            ? Serializer.Serialize(responseType, response)
             : null;
 
         return ProduceToTransport(response, (string)replyTo, responsePayload, responseHeaders);
@@ -702,8 +711,8 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
     public Task<TResponse> Send<TResponse, TRequest>(TRequest request, string path = null, IDictionary<string, object> headers = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
         => ProduceSend<TResponse>(request, timeout, path, headers, currentServiceProvider: null, cancellationToken);
 
-    #endregion
 
     #endregion
 
+    #endregion
 }

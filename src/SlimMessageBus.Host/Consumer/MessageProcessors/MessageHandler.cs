@@ -2,20 +2,28 @@
 
 using SlimMessageBus.Host.Collections;
 
+public delegate void ConsumerContextIntializer<T>(T transportMessage, ConsumerContext consumerContext);
+
 public class MessageHandler : IMessageHandler
 {
     private readonly ILogger _logger;
     private readonly IMessageScopeFactory _messageScopeFactory;
-    protected RuntimeTypeCache RuntimeTypeCache { get; }
     private readonly ICurrentTimeProvider _currentTimeProvider;
-    private readonly Action<object, ConsumerContext> _consumerContextInitializer;
-
+    private readonly ConsumerContextIntializer<object> _consumerContextInitializer;
+    
+    protected RuntimeTypeCache RuntimeTypeCache { get; }
     protected IMessageTypeResolver MessageTypeResolver { get; }
     protected IMessageHeadersFactory MessageHeadersFactory { get; }
+
     public MessageBusBase MessageBus { get; }
     public string Path { get; }
 
-    public MessageHandler(MessageBusBase messageBus, IMessageScopeFactory messageScopeFactory, IMessageTypeResolver messageTypeResolver, IMessageHeadersFactory messageHeadersFactory, RuntimeTypeCache runtimeTypeCache, ICurrentTimeProvider currentTimeProvider, string path, Action<object, ConsumerContext> consumerContextInitializer = null)
+    /// <summary>
+    /// Represents a response that has been discarded (it expired)
+    /// </summary>
+    protected static readonly object ResponseForExpiredRequest = new ();
+
+    public MessageHandler(MessageBusBase messageBus, IMessageScopeFactory messageScopeFactory, IMessageTypeResolver messageTypeResolver, IMessageHeadersFactory messageHeadersFactory, RuntimeTypeCache runtimeTypeCache, ICurrentTimeProvider currentTimeProvider, string path, ConsumerContextIntializer<object> consumerContextInitializer = null)
     {
         if (messageBus is null) throw new ArgumentNullException(nameof(messageBus));
 
@@ -27,7 +35,7 @@ public class MessageHandler : IMessageHandler
         RuntimeTypeCache = runtimeTypeCache;
         MessageTypeResolver = messageTypeResolver;
         MessageHeadersFactory = messageHeadersFactory;
-        MessageBus = messageBus ?? throw new ArgumentNullException(nameof(messageBus));
+        MessageBus = messageBus;
         Path = path ?? throw new ArgumentNullException(nameof(path));
     }
 
@@ -58,7 +66,7 @@ public class MessageHandler : IMessageHandler
                     // ToDo: Call interceptor
 
                     // Do not process the expired message
-                    return (null, null, requestId);
+                    return (ResponseForExpiredRequest, null, requestId);
                 }
             }
 

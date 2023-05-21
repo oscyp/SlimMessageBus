@@ -6,7 +6,7 @@ using Confluent.Kafka;
 
 using ConsumeResult = Confluent.Kafka.ConsumeResult<Confluent.Kafka.Ignore, byte[]>;
 
-public class KafkaPartitionConsumerForResponsesTest : IAsyncDisposable
+public class KafkaPartitionConsumerForResponsesTest : IDisposable
 {
     private readonly MessageBusMock _messageBusMock;
     private readonly TopicPartition _topicPartition;
@@ -135,16 +135,12 @@ public class KafkaPartitionConsumerForResponsesTest : IAsyncDisposable
         };
     }
 
-    #region IAsyncDisposable
+    #region IDisposable
 
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
-        if (_subject != null)
-        {
-            await _subject.DisposeAsync();
-            _subject = null;
-
-        }
+        _subject?.Dispose();
+        _subject = null;
     }
 
     #endregion
