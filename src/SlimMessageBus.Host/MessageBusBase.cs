@@ -14,7 +14,7 @@ public abstract class MessageBusBase<TProviderSettings> : MessageBusBase where T
     }
 }
 
-public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMessageBus, IMessageScopeFactory, IMessageHeadersFactory, ICurrentTimeProvider, IResponseProducer
+public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMessageBus, IMessageScopeFactory, IMessageHeadersFactory, ICurrentTimeProvider, IResponseProducer, IResponseConsumer
 {
     private readonly ILogger _logger;
     private CancellationTokenSource _cancellationTokenSource = new();

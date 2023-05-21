@@ -41,7 +41,7 @@ public class KafkaPartitionConsumerForConsumersTest : IDisposable
 
         var headerSerializer = new StringValueSerializer();
 
-        _subject = new Lazy<KafkaPartitionConsumerForConsumers>(() => new KafkaPartitionConsumerForConsumers(new[] { _consumerBuilder.ConsumerSettings }, group, _topicPartition, _commitControllerMock.Object, massageBusMock.Bus, headerSerializer));
+        _subject = new Lazy<KafkaPartitionConsumerForConsumers>(() => new KafkaPartitionConsumerForConsumers(massageBusMock.Bus.LoggerFactory, new[] { _consumerBuilder.ConsumerSettings }, group, _topicPartition, _commitControllerMock.Object, headerSerializer, massageBusMock.Bus));
     }
 
     public void Dispose()

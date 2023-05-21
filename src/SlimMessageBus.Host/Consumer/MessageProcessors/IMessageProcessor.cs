@@ -1,6 +1,6 @@
 namespace SlimMessageBus.Host;
 
-public interface IMessageProcessor<TMessage>
+public interface IMessageProcessor<in TMessage>
 {
     IReadOnlyCollection<AbstractConsumerSettings> ConsumerSettings { get; }
 

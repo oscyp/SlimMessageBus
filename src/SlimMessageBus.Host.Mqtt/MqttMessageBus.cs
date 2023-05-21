@@ -70,7 +70,7 @@ public class MqttMessageBus : MessageBusBase<MqttMessageBusSettings>
 
         if (Settings.RequestResponse != null)
         {
-            var processor = new ResponseMessageProcessor<MqttApplicationMessage>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload);
+            var processor = new ResponseMessageProcessor<MqttApplicationMessage>(LoggerFactory, Settings.RequestResponse, responseConsumer: this, messagePayloadProvider: m => m.Payload);
             AddTopicConsumer(Settings.RequestResponse.Path, processor);
         }
 

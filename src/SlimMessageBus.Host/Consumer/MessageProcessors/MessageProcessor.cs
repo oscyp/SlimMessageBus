@@ -1,9 +1,5 @@
 ﻿namespace SlimMessageBus.Host;
 
-public delegate Type MessageTypeProvider<in T>(T transportMessage);
-
-public delegate object MessageProvider<in T>(Type messageType, T transportMessage);
-
 /// <summary>
 /// Implementation of <see cref="IMessageProcessor{TMessage}"/> that peforms orchestration around processing of a new message using an instance of the declared consumer (<see cref="IConsumer{TMessage}"/> or <see cref="IRequestHandler{TRequest, TResponse}"/> interface).
 /// </summary>
@@ -16,6 +12,7 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
     private readonly bool _shouldFailWhenUnrecognizedMessageType;
     private readonly bool _shouldLogWhenUnrecognizedMessageType;
     private readonly IResponseProducer _responseProducer;
+    private readonly ConsumerContextIntializer<TTransportMessage> _consumerContextInitializer;
 
     protected IReadOnlyCollection<AbstractConsumerSettings> _consumerSettings;
     protected IReadOnlyCollection<IMessageTypeConsumerInvokerSettings> _invokers;
@@ -38,8 +35,7 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
         messageHeadersFactory: messageBus,
         runtimeTypeCache: messageBus.RuntimeTypeCache,
         currentTimeProvider: messageBus,
-        path: path,
-        consumerContextInitializer == null ? null : (msg, ctx) => consumerContextInitializer((TTransportMessage)msg, ctx))
+        path: path)
     {
         _logger = messageBus.LoggerFactory.CreateLogger<MessageProcessor<TTransportMessage>>();
         _messageProvider = messageProvider ?? throw new ArgumentNullException(nameof(messageProvider));
@@ -47,12 +43,25 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
         _consumerSettings = (consumerSettings ?? throw new ArgumentNullException(nameof(consumerSettings))).ToList();
         _responseProducer = responseProducer;
 
+        _consumerContextInitializer = consumerContextInitializer;
+
         _invokers = consumerSettings.OfType<ConsumerSettings>().SelectMany(x => x.Invokers).ToList();
         _singleInvoker = _invokers.Count == 1 ? _invokers.First() : null;
 
         _shouldFailWhenUnrecognizedMessageType = consumerSettings.OfType<ConsumerSettings>().Any(x => x.UndeclaredMessageType.Fail);
         _shouldLogWhenUnrecognizedMessageType = consumerSettings.OfType<ConsumerSettings>().Any(x => x.UndeclaredMessageType.Log);
     }
+
+    protected override ConsumerContext CreateConsumerContext(IReadOnlyDictionary<string, object> messageHeaders, IMessageTypeConsumerInvokerSettings consumerInvoker, object transportMessage, object consumerInstance, CancellationToken cancellationToken)
+    {
+        var context = base.CreateConsumerContext(messageHeaders, consumerInvoker, transportMessage, consumerInstance, cancellationToken);
+        context.Bus = MessageBus;
+
+        _consumerContextInitializer?.Invoke((TTransportMessage)transportMessage, context);
+
+        return context;
+    }
+
 
     public virtual async Task<(Exception Exception, AbstractConsumerSettings ConsumerSettings, object Response, object Message)> ProcessMessage(TTransportMessage transportMessage, IReadOnlyDictionary<string, object> messageHeaders, CancellationToken cancellationToken, IServiceProvider currentServiceProvider = null)
     {
@@ -94,6 +103,7 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
                                 // We discard expired requests, so there is no reponse to provide
                                 await _responseProducer.ProduceResponse(requestId, message, messageHeaders, lastResponse, lastException, consumerInvoker).ConfigureAwait(false);
                             }
+                            // Clear the exception as it will be returned to the sender.
                             lastException = null;
                         }
                         else if (lastException != null)
@@ -105,7 +115,7 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
                 catch (Exception e)
                 {
                     _logger.LogDebug(e, "Processing of the message {TransportMessage} of type {MessageType} failed", transportMessage, messageType);
-                    lastException = e;
+                    lastException ??= e;
                 }
             }
         }
@@ -179,7 +189,7 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
 
                 if (_shouldFailWhenUnrecognizedMessageType)
                 {
-                    throw new MessageBusException($"The message on path {Path} declared {MessageHeaders.MessageType} header of type {messageType}, but none of the the known consumer types {string.Join(",", _invokers.Select(x => x.ConsumerType.Name))} was able to handle that");
+                    throw new ConsumerMessageBusException($"The message on path {Path} declared {MessageHeaders.MessageType} header of type {messageType}, but none of the the known consumer types {string.Join(",", _invokers.Select(x => x.ConsumerType.Name))} was able to handle that");
                 }
             }
         }

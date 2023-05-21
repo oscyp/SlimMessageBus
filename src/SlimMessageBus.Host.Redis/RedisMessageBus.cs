@@ -169,11 +169,11 @@ public class RedisMessageBus : MessageBusBase<RedisMessageBusSettings>
 
             if (Settings.RequestResponse.PathKind == PathKind.Topic)
             {
-                AddTopicConsumer(Settings.RequestResponse.Path, subscriber, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload));
+                AddTopicConsumer(Settings.RequestResponse.Path, subscriber, new ResponseMessageProcessor<MessageWithHeaders>(LoggerFactory, Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload));
             }
             else
             {
-                queues.Add((Settings.RequestResponse.Path, new ResponseMessageProcessor<MessageWithHeaders>(Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload)));
+                queues.Add((Settings.RequestResponse.Path, new ResponseMessageProcessor<MessageWithHeaders>(LoggerFactory, Settings.RequestResponse, this, messagePayloadProvider: m => m.Payload)));
             }
         }
 

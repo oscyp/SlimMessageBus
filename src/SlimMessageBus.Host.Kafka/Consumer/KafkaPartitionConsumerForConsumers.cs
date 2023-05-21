@@ -1,7 +1,5 @@
 namespace SlimMessageBus.Host.Kafka;
 
-using System.Diagnostics.CodeAnalysis;
-
 using ConsumeResult = ConsumeResult<Ignore, byte[]>;
 
 /// <summary>
@@ -10,15 +8,17 @@ using ConsumeResult = ConsumeResult<Ignore, byte[]>;
 /// </summary>
 public class KafkaPartitionConsumerForConsumers : KafkaPartitionConsumer
 {
-    public KafkaPartitionConsumerForConsumers(ConsumerSettings[] consumerSettings, string group, TopicPartition topicPartition, IKafkaCommitController commitController, [NotNull] MessageBusBase messageBus, [NotNull] IMessageSerializer headerSerializer)
-        : base(consumerSettings, group, topicPartition, commitController, messageBus, headerSerializer)
+    private readonly MessageBusBase _messageBus;
+
+    public KafkaPartitionConsumerForConsumers(ILoggerFactory loggerFactory, ConsumerSettings[] consumerSettings, string group, TopicPartition topicPartition, IKafkaCommitController commitController, IMessageSerializer headerSerializer, MessageBusBase messageBus)
+        : base(loggerFactory, consumerSettings, group, topicPartition, commitController, headerSerializer)
     {
+        _messageBus = messageBus;
     }
 
     protected override IMessageProcessor<ConsumeResult<Ignore, byte[]>> CreateMessageProcessor()
-        => new MessageProcessor<ConsumeResult>(ConsumerSettings, MessageBus, messageProvider: GetMessageFromTransportMessage, path: TopicPartition.Topic, responseProducer: MessageBus, (m, ctx) => ctx.SetTransportMessage(m));
-
+        => new MessageProcessor<ConsumeResult>(ConsumerSettings, _messageBus, messageProvider: GetMessageFromTransportMessage, path: TopicPartition.Topic, responseProducer: _messageBus, (m, ctx) => ctx.SetTransportMessage(m));
 
     private object GetMessageFromTransportMessage(Type messageType, ConsumeResult transportMessage)
-        => MessageBus.Serializer.Deserialize(messageType, transportMessage.Message.Value);
+        => _messageBus.Serializer.Deserialize(messageType, transportMessage.Message.Value);
 }

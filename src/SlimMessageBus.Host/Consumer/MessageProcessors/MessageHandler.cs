@@ -1,15 +1,10 @@
 ﻿namespace SlimMessageBus.Host;
 
-using SlimMessageBus.Host.Collections;
-
-public delegate void ConsumerContextIntializer<T>(T transportMessage, ConsumerContext consumerContext);
-
 public class MessageHandler : IMessageHandler
 {
     private readonly ILogger _logger;
     private readonly IMessageScopeFactory _messageScopeFactory;
     private readonly ICurrentTimeProvider _currentTimeProvider;
-    private readonly ConsumerContextIntializer<object> _consumerContextInitializer;
     
     protected RuntimeTypeCache RuntimeTypeCache { get; }
     protected IMessageTypeResolver MessageTypeResolver { get; }
@@ -23,14 +18,13 @@ public class MessageHandler : IMessageHandler
     /// </summary>
     protected static readonly object ResponseForExpiredRequest = new ();
 
-    public MessageHandler(MessageBusBase messageBus, IMessageScopeFactory messageScopeFactory, IMessageTypeResolver messageTypeResolver, IMessageHeadersFactory messageHeadersFactory, RuntimeTypeCache runtimeTypeCache, ICurrentTimeProvider currentTimeProvider, string path, ConsumerContextIntializer<object> consumerContextInitializer = null)
+    public MessageHandler(MessageBusBase messageBus, IMessageScopeFactory messageScopeFactory, IMessageTypeResolver messageTypeResolver, IMessageHeadersFactory messageHeadersFactory, RuntimeTypeCache runtimeTypeCache, ICurrentTimeProvider currentTimeProvider, string path)
     {
         if (messageBus is null) throw new ArgumentNullException(nameof(messageBus));
 
         _logger = messageBus.LoggerFactory.CreateLogger<MessageHandler>();
         _messageScopeFactory = messageScopeFactory;
         _currentTimeProvider = currentTimeProvider;
-        _consumerContextInitializer = consumerContextInitializer;
 
         RuntimeTypeCache = runtimeTypeCache;
         MessageTypeResolver = messageTypeResolver;
@@ -77,16 +71,7 @@ public class MessageHandler : IMessageHandler
 
             try
             {
-                var context = new ConsumerContext
-                {
-                    Path = Path,
-                    Headers = messageHeaders,
-                    CancellationToken = cancellationToken,
-                    Bus = MessageBus,
-                    Consumer = consumerInstance,
-                    ConsumerInvoker = consumerInvoker
-                };
-                _consumerContextInitializer?.Invoke(nativeMessage, context);
+                var context = CreateConsumerContext(messageHeaders, consumerInvoker, nativeMessage, consumerInstance, cancellationToken);
 
                 var consumerInterceptors = RuntimeTypeCache.ConsumerInterceptorType.ResolveAll(messageScope.ServiceProvider, messageType);
                 var handlerInterceptors = hasResponse ? RuntimeTypeCache.HandlerInterceptorType.ResolveAll(messageScope.ServiceProvider, (messageType, responseType)) : null;
@@ -117,6 +102,16 @@ public class MessageHandler : IMessageHandler
 
         return (response, responseException, requestId);
     }
+
+    protected virtual ConsumerContext CreateConsumerContext(IReadOnlyDictionary<string, object> messageHeaders, IMessageTypeConsumerInvokerSettings consumerInvoker, object transportMessage, object consumerInstance, CancellationToken cancellationToken)
+        => new()
+        {
+            Path = Path,
+            Headers = messageHeaders,
+            CancellationToken = cancellationToken,
+            Consumer = consumerInstance,
+            ConsumerInvoker = consumerInvoker
+        };
 
     public async Task<object> ExecuteConsumer(object message, IConsumerContext consumerContext, IMessageTypeConsumerInvokerSettings consumerInvoker, Type responseType)
     {

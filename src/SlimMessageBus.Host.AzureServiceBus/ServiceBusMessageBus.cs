@@ -117,7 +117,7 @@ public class ServiceBusMessageBus : MessageBusBase<ServiceBusMessageBusSettings>
         if (Settings.RequestResponse != null)
         {
             var topicSubscription = new TopicSubscriptionParams(Settings.RequestResponse.Path, Settings.RequestResponse.GetSubscriptionName(required: false));
-            var messageProcessor = new ResponseMessageProcessor<ServiceBusReceivedMessage>(Settings.RequestResponse, this, m => m.Body.ToArray());
+            var messageProcessor = new ResponseMessageProcessor<ServiceBusReceivedMessage>(LoggerFactory, Settings.RequestResponse, responseConsumer: this, m => m.Body.ToArray());
             AddConsumer(topicSubscription, messageProcessor, new[] { Settings.RequestResponse });
         }
     }
