@@ -5,10 +5,9 @@ using System.Diagnostics.CodeAnalysis;
 using ConsumeResult = ConsumeResult<Ignore, byte[]>;
 using IConsumer = IConsumer<Ignore, byte[]>;
 
-public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
+// ToDo: Use AbstractConsumer
+public class KafkaGroupConsumer : AbstractConsumer, IAsyncDisposable, IKafkaCommitController
 {
-    private readonly ILogger _logger;
-
     private readonly SafeDictionaryWrapper<TopicPartition, IKafkaPartitionConsumer> _processors;
 
     private IConsumer _consumer;
@@ -20,13 +19,13 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
     public IReadOnlyCollection<string> Topics { get; }
 
     public KafkaGroupConsumer(KafkaMessageBus messageBus, string group, IReadOnlyCollection<string> topics, Func<TopicPartition, IKafkaCommitController, IKafkaPartitionConsumer> processorFactory)
+        : base(messageBus.LoggerFactory.CreateLogger<KafkaGroupConsumer>())
     {
         MessageBus = messageBus ?? throw new ArgumentNullException(nameof(messageBus));
         Group = group ?? throw new ArgumentNullException(nameof(group));
         Topics = topics ?? throw new ArgumentNullException(nameof(topics));
 
-        _logger = messageBus.LoggerFactory.CreateLogger<KafkaGroupConsumer>();
-        _logger.LogInformation("Creating for Group: {Group}, Topics: {Topics}", group, string.Join(", ", topics));
+        Logger.LogInformation("Creating for Group: {Group}, Topics: {Topics}", group, string.Join(", ", topics));
 
         _processors = new SafeDictionaryWrapper<TopicPartition, IKafkaPartitionConsumer>(tp => processorFactory(tp, this));
 
@@ -35,8 +34,10 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
 
     #region Implementation of IAsyncDisposable
 
-    public async ValueTask DisposeAsync()
+    protected override async ValueTask DisposeAsyncCore()
     {
+        await base.DisposeAsyncCore();
+
         if (_consumerTask != null)
         {
             await Stop().ConfigureAwait(false);
@@ -45,12 +46,16 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
         // dispose processors
         foreach (var p in _processors.ClearAndSnapshot())
         {
-            p.DisposeSilently("processor", _logger);
+            p.DisposeSilently("processor", Logger);
         }
 
         // dispose the consumer
-        _consumer?.DisposeSilently("consumer", _logger);
+        _consumer?.DisposeSilently("consumer", Logger);
         _consumer = null;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
 
         GC.SuppressFinalize(this);
     }
@@ -81,7 +86,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
         return consumer;
     }
 
-    public void Start()
+    protected override Task OnStart()
     {
         if (_consumerTask != null)
         {
@@ -90,6 +95,8 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
 
         _consumerCts = new CancellationTokenSource();
         _consumerTask = Task.Factory.StartNew(ConsumerLoop, _consumerCts.Token, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -97,10 +104,10 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
     /// </summary>
     protected virtual async Task ConsumerLoop()
     {
-        _logger.LogInformation("Group [{Group}]: Subscribing to topics: {Topics}", Group, string.Join(", ", Topics));
+        Logger.LogInformation("Group [{Group}]: Subscribing to topics: {Topics}", Group, string.Join(", ", Topics));
         _consumer.Subscribe(Topics);
 
-        _logger.LogInformation("Group [{Group}]: Consumer loop started", Group);
+        Logger.LogInformation("Group [{Group}]: Consumer loop started", Group);
         try
         {
             try
@@ -109,7 +116,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
                 {
                     try
                     {
-                        _logger.LogTrace("Group [{Group}]: Polling consumer", Group);
+                        Logger.LogTrace("Group [{Group}]: Polling consumer", Group);
                         var consumeResult = _consumer.Consume(cancellationToken);
                         if (consumeResult.IsPartitionEOF)
                         {
@@ -124,7 +131,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
                     {
                         var pollRetryInterval = MessageBus.ProviderSettings.ConsumerPollRetryInterval;
 
-                        _logger.LogError(e, "Group [{Group}]: Error occured while polling new messages (will retry in {RetryInterval}) - {Reason}", Group, pollRetryInterval, e.Error.Reason);
+                        Logger.LogError(e, "Group [{Group}]: Error occured while polling new messages (will retry in {RetryInterval}) - {Reason}", Group, pollRetryInterval, e.Error.Reason);
                         await Task.Delay(pollRetryInterval, _consumerCts.Token).ConfigureAwait(false);
                     }
                 }
@@ -133,7 +140,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
             {
             }
 
-            _logger.LogInformation("Group [{Group}]: Unsubscribing from topics", Group);
+            Logger.LogInformation("Group [{Group}]: Unsubscribing from topics", Group);
             _consumer.Unsubscribe();
 
             if (MessageBus.ProviderSettings.EnableCommitOnBusStop)
@@ -146,16 +153,18 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Group [{Group}]: Error occured in group loop (terminated)", Group);
+            Logger.LogError(e, "Group [{Group}]: Error occured in group loop (terminated)", Group);
         }
         finally
         {
-            _logger.LogInformation("Group [{Group}]: Consumer loop finished", Group);
+            Logger.LogInformation("Group [{Group}]: Consumer loop finished", Group);
         }
     }
 
-    public async Task Stop()
+    protected override async Task OnStop()
     {
+        await OnStop();
+
         if (_consumerTask == null)
         {
             throw new MessageBusException($"Consumer for group {Group} not yet started");
@@ -180,7 +189,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
         // Ensure processors exist for each assigned topic-partition
         foreach (var partition in partitions)
         {
-            _logger.LogDebug("Group [{Group}]: Assigned partition, Topic: {Topic}, Partition: {Partition}", Group, partition.Topic, partition.Partition);
+            Logger.LogDebug("Group [{Group}]: Assigned partition, Topic: {Topic}, Partition: {Partition}", Group, partition.Topic, partition.Partition);
 
             var processor = _processors[partition];
             processor.OnPartitionAssigned(partition);
@@ -191,7 +200,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
     {
         foreach (var partition in partitions)
         {
-            _logger.LogDebug("Group [{Group}]: Revoked Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, partition.Topic, partition.Partition, partition.Offset);
+            Logger.LogDebug("Group [{Group}]: Revoked Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, partition.Topic, partition.Partition, partition.Offset);
 
             var processor = _processors[partition.TopicPartition];
             processor.OnPartitionRevoked();
@@ -200,7 +209,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
 
     protected virtual void OnPartitionEndReached([NotNull] TopicPartitionOffset offset)
     {
-        _logger.LogDebug("Group [{Group}]: Reached end of partition, Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, offset.Topic, offset.Partition, offset.Offset);
+        Logger.LogDebug("Group [{Group}]: Reached end of partition, Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, offset.Topic, offset.Partition, offset.Offset);
 
         var processor = _processors[offset.TopicPartition];
         processor.OnPartitionEndReached(offset);
@@ -208,7 +217,7 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
 
     protected virtual async ValueTask OnMessage([NotNull] ConsumeResult message)
     {
-        _logger.LogDebug("Group [{Group}]: Received message with Topic: {Topic}, Partition: {Partition}, Offset: {Offset}, payload size: {MessageSize}", Group, message.Topic, message.Partition, message.Offset, message.Message.Value?.Length ?? 0);
+        Logger.LogDebug("Group [{Group}]: Received message with Topic: {Topic}, Partition: {Partition}, Offset: {Offset}, payload size: {MessageSize}", Group, message.Topic, message.Partition, message.Offset, message.Message.Value?.Length ?? 0);
 
         var processor = _processors[message.TopicPartition];
         await processor.OnMessage(message).ConfigureAwait(false);
@@ -218,11 +227,11 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
     {
         if (e.Error.IsError || e.Error.IsFatal)
         {
-            _logger.LogWarning("Group [{Group}]: Failed to commit offsets: [{Offsets}], error: {error}", Group, string.Join(", ", e.Offsets), e.Error.Reason);
+            Logger.LogWarning("Group [{Group}]: Failed to commit offsets: [{Offsets}], error: {error}", Group, string.Join(", ", e.Offsets), e.Error.Reason);
         }
         else
         {
-            _logger.LogTrace("Group [{Group}]: Successfully committed offsets: [{Offsets}]", Group, string.Join(", ", e.Offsets));
+            Logger.LogTrace("Group [{Group}]: Successfully committed offsets: [{Offsets}]", Group, string.Join(", ", e.Offsets));
         }
     }
 
@@ -237,14 +246,14 @@ public class KafkaGroupConsumer : IAsyncDisposable, IKafkaCommitController
 
     protected virtual void OnStatistics(string json)
     {
-        _logger.LogTrace("Group [{Group}]: Statistics: {statistics}", Group, json);
+        Logger.LogTrace("Group [{Group}]: Statistics: {statistics}", Group, json);
     }
 
     #region Implementation of IKafkaCoordinator
 
     public void Commit(TopicPartitionOffset offset)
     {
-        _logger.LogDebug("Group [{Group}]: Commit Offset, Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, offset.Topic, offset.Partition, offset.Offset);
+        Logger.LogDebug("Group [{Group}]: Commit Offset, Topic: {Topic}, Partition: {Partition}, Offset: {Offset}", Group, offset.Topic, offset.Partition, offset.Offset);
         _consumer.Commit(new[] { offset });
     }
 

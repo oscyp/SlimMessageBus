@@ -62,7 +62,6 @@ public class MessageProcessor<TTransportMessage> : MessageHandler, IMessageProce
         return context;
     }
 
-
     public virtual async Task<(Exception Exception, AbstractConsumerSettings ConsumerSettings, object Response, object Message)> ProcessMessage(TTransportMessage transportMessage, IReadOnlyDictionary<string, object> messageHeaders, CancellationToken cancellationToken, IServiceProvider currentServiceProvider = null)
     {
         IMessageTypeConsumerInvokerSettings lastConsumerInvoker = null;

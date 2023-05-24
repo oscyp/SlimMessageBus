@@ -9,10 +9,12 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
     private readonly ILogger _logger;
     private readonly IKafkaCommitController _commitController;
     private readonly IMessageSerializer _headerSerializer;
-    private IMessageProcessor<ConsumeResult> _messageProcessor;
+    private readonly IMessageProcessor<ConsumeResult> _messageProcessor;
+
     private TopicPartitionOffset _lastOffset;
     private TopicPartitionOffset _lastCheckpointOffset;
     private CancellationTokenSource _cancellationTokenSource;
+
     private bool _disposedValue;
 
     protected ILoggerFactory LoggerFactory { get; }
@@ -21,7 +23,7 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
     public string Group { get; }
     public TopicPartition TopicPartition { get; }
 
-    protected KafkaPartitionConsumer(ILoggerFactory loggerFactory, AbstractConsumerSettings[] consumerSettings, string group, TopicPartition topicPartition, IKafkaCommitController commitController, IMessageSerializer headerSerializer)
+    protected KafkaPartitionConsumer(ILoggerFactory loggerFactory, AbstractConsumerSettings[] consumerSettings, string group, TopicPartition topicPartition, IKafkaCommitController commitController, IMessageSerializer headerSerializer, IMessageProcessor<ConsumeResult> messageProcessor)
     {
         LoggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
 
@@ -35,7 +37,7 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
 
         _headerSerializer = headerSerializer;
         _commitController = commitController;
-        _messageProcessor = CreateMessageProcessor();
+        _messageProcessor = messageProcessor;
 
         // ToDo: Add support for Kafka driven automatic commit
         CheckpointTrigger = CreateCheckpointTrigger();
@@ -46,8 +48,6 @@ public abstract class KafkaPartitionConsumer : IKafkaPartitionConsumer
         var f = new CheckpointTriggerFactory(LoggerFactory, (configuredCheckpoints) => $"The checkpoint settings ({nameof(BuilderExtensions.CheckpointAfter)} and {nameof(BuilderExtensions.CheckpointEvery)}) across all the consumers that use the same Topic {TopicPartition.Topic} and Group {Group} must be the same (found settings are: {string.Join(", ", configuredCheckpoints)})");
         return f.Create(ConsumerSettings);
     }
-
-    protected abstract IMessageProcessor<ConsumeResult<Ignore, byte[]>> CreateMessageProcessor();
 
     #region IDisposable pattern
 

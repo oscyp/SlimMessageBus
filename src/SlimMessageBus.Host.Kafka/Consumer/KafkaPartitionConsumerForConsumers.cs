@@ -8,17 +8,21 @@ using ConsumeResult = ConsumeResult<Ignore, byte[]>;
 /// </summary>
 public class KafkaPartitionConsumerForConsumers : KafkaPartitionConsumer
 {
-    private readonly MessageBusBase _messageBus;
-
     public KafkaPartitionConsumerForConsumers(ILoggerFactory loggerFactory, ConsumerSettings[] consumerSettings, string group, TopicPartition topicPartition, IKafkaCommitController commitController, IMessageSerializer headerSerializer, MessageBusBase messageBus)
-        : base(loggerFactory, consumerSettings, group, topicPartition, commitController, headerSerializer)
+        : base(
+            loggerFactory, 
+            consumerSettings, 
+            group, 
+            topicPartition, 
+            commitController, 
+            headerSerializer,
+            new MessageProcessor<ConsumeResult>(
+                consumerSettings, 
+                messageBus, 
+                path: topicPartition.Topic,
+                responseProducer: messageBus,
+                messageProvider: (messageType, transportMessage) => messageBus.Serializer.Deserialize(messageType, transportMessage.Message.Value),
+                consumerContextInitializer: (m, ctx) => ctx.SetTransportMessage(m)))
     {
-        _messageBus = messageBus;
     }
-
-    protected override IMessageProcessor<ConsumeResult<Ignore, byte[]>> CreateMessageProcessor()
-        => new MessageProcessor<ConsumeResult>(ConsumerSettings, _messageBus, messageProvider: GetMessageFromTransportMessage, path: TopicPartition.Topic, responseProducer: _messageBus, (m, ctx) => ctx.SetTransportMessage(m));
-
-    private object GetMessageFromTransportMessage(Type messageType, ConsumeResult transportMessage)
-        => _messageBus.Serializer.Deserialize(messageType, transportMessage.Message.Value);
 }
