@@ -1,7 +1,6 @@
 ﻿namespace SlimMessageBus.Host.AzureServiceBus;
 
 using SlimMessageBus.Host.AzureServiceBus.Consumer;
-using SlimMessageBus.Host.Collections;
 
 public class ServiceBusMessageBus : MessageBusBase<ServiceBusMessageBusSettings>
 {
@@ -21,29 +20,7 @@ public class ServiceBusMessageBus : MessageBusBase<ServiceBusMessageBusSettings>
         OnBuildProvider();
     }
 
-    protected override void AssertSettings()
-    {
-        base.AssertSettings();
-
-        if (string.IsNullOrEmpty(ProviderSettings.ConnectionString))
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(ServiceBusMessageBusSettings)}.{nameof(ServiceBusMessageBusSettings.ConnectionString)} must be set");
-        }
-
-        var kindMapping = new KindMapping();
-        // This will validae if one path is mapped to both a topic and a queue
-        kindMapping.Configure(Settings);
-    }
-
-    protected override void AssertConsumerSettings(ConsumerSettings consumerSettings)
-    {
-        if (consumerSettings is null) throw new ArgumentNullException(nameof(consumerSettings));
-
-        base.AssertConsumerSettings(consumerSettings);
-
-        Assert.IsTrue(consumerSettings.PathKind != PathKind.Topic || consumerSettings.GetSubscriptionName(required: false) != null,
-            () => new ConfigurationMessageBusException($"The {nameof(ConsumerSettings)}.{nameof(AsbConsumerBuilderExtensions.SubscriptionName)} is not set on topic {consumerSettings.Path}"));
-    }
+    protected override IMessageBusSettingsValidationService ValidationService => new ServiceBusMessageBusSettingsValidationService(Settings, ProviderSettings);
 
     protected void AddConsumer(TopicSubscriptionParams topicSubscription, IMessageProcessor<ServiceBusReceivedMessage> messageProcessor, IEnumerable<AbstractConsumerSettings> consumerSettings)
     {

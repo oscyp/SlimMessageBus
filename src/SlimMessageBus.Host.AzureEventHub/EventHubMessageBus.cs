@@ -1,5 +1,7 @@
 ﻿namespace SlimMessageBus.Host.AzureEventHub;
 
+using SlimMessageBus.Host.Services;
+
 /// <summary>
 /// MessageBus implementation for Azure Event Hub.
 /// </summary>
@@ -15,34 +17,12 @@ public class EventHubMessageBus : MessageBusBase<EventHubMessageBusSettings>
     public EventHubMessageBus(MessageBusSettings settings, EventHubMessageBusSettings providerSettings)
         : base(settings, providerSettings)
     {
-        _logger = LoggerFactory.CreateLogger<EventHubMessageBus>();        
+        _logger = LoggerFactory.CreateLogger<EventHubMessageBus>();
 
         OnBuildProvider();
     }
 
-    protected override void AssertSettings()
-    {
-        base.AssertSettings();
-
-        if (string.IsNullOrEmpty(ProviderSettings.ConnectionString))
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(EventHubMessageBusSettings)}.{nameof(EventHubMessageBusSettings.ConnectionString)} must be set");
-        }
-
-        if (IsAnyConsumerDeclared)
-        {
-            if (string.IsNullOrEmpty(ProviderSettings.StorageConnectionString))
-            {
-                throw new ConfigurationMessageBusException(Settings, $"When consumers are declared, the {nameof(EventHubMessageBusSettings)}.{nameof(EventHubMessageBusSettings.StorageConnectionString)} must be set");
-            }
-            if (string.IsNullOrEmpty(ProviderSettings.StorageBlobContainerName))
-            {
-                throw new ConfigurationMessageBusException(Settings, $"When consumers are declared, the {nameof(EventHubMessageBusSettings)}.{nameof(EventHubMessageBusSettings.StorageBlobContainerName)} must be set");
-            }
-        }
-    }
-
-    private bool IsAnyConsumerDeclared => Settings.Consumers.Count > 0 || Settings.RequestResponse != null;
+    protected override IMessageBusSettingsValidationService ValidationService => new EventHubMessageBusSettingsValidationService(Settings, ProviderSettings);
 
     #region Overrides of MessageBusBase
 
@@ -51,7 +31,7 @@ public class EventHubMessageBus : MessageBusBase<EventHubMessageBusSettings>
         base.Build();
 
         // Initialize storage client only when there are consumers declared
-        _blobContainerClient = IsAnyConsumerDeclared
+        _blobContainerClient = Settings.IsAnyConsumerDeclared()
             ? ProviderSettings.BlobContanerClientFactory()
             : null;
 

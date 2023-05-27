@@ -1,7 +1,5 @@
 ﻿namespace SlimMessageBus.Host.Mqtt;
 
-using MQTTnet.Extensions.ManagedClient;
-
 public class MqttMessageBus : MessageBusBase<MqttMessageBusSettings>
 {
     private readonly ILogger _logger;
@@ -15,19 +13,7 @@ public class MqttMessageBus : MessageBusBase<MqttMessageBusSettings>
         OnBuildProvider();
     }
 
-    protected override void AssertSettings()
-    {
-        base.AssertSettings();
-
-        if (ProviderSettings.ClientBuilder is null)
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(MqttMessageBusSettings)}.{nameof(MqttMessageBusSettings.ClientBuilder)} must be set");
-        }
-        if (ProviderSettings.ManagedClientBuilder is null)
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(MqttMessageBusSettings)}.{nameof(MqttMessageBusSettings.ManagedClientBuilder)} must be set");
-        }
-    }
+    protected override IMessageBusSettingsValidationService ValidationService => new MqttMessageBusSettingsValidationService(Settings, ProviderSettings);
 
     public bool IsConnected => _mqttClient?.IsConnected ?? false;
 

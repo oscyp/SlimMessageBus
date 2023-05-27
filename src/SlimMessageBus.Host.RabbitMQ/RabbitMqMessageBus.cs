@@ -27,66 +27,7 @@ public class RabbitMqMessageBus : MessageBusBase<RabbitMqMessageBusSettings>, IR
         OnBuildProvider();
     }
 
-    protected override void AssertProducers()
-    {
-        foreach (var producer in Settings.Producers)
-        {
-            var exchangeName = producer.DefaultPath;
-            if (exchangeName == null)
-            {
-                throw new ConfigurationMessageBusException($"The {nameof(RabbitMqProducerBuilderExtensions.Exchange)} is not provided on the producer for message type {producer.MessageType.Name}");
-            }
-
-            var routingKeyProvider = producer.GetMessageRoutingKeyProvider(ProviderSettings);
-            if (routingKeyProvider == null)
-            {
-                // Requirement for the routing key depends on the ExchangeType
-                var exchangeType = producer.GetExchageType(ProviderSettings);
-                if (exchangeType == global::RabbitMQ.Client.ExchangeType.Direct || exchangeType == global::RabbitMQ.Client.ExchangeType.Topic)
-                {
-                    throw new ConfigurationMessageBusException($"The {nameof(RabbitMqProducerBuilderExtensions.RoutingKeyProvider)} is neither provided on the producer for exchange {producer.DefaultPath} nor a default provider exists at the bus level (check that .{nameof(RabbitMqProducerBuilderExtensions.RoutingKeyProvider)}() exists on the producer or bus level). Exchange type {exchangeType} requires the producer to has a routing key provider.");
-                }
-            }
-        }
-
-        base.AssertProducers();
-    }
-
-    protected override void AssertConsumerSettings(ConsumerSettings consumerSettings)
-    {
-        var exchangeName = consumerSettings.Path;
-        if (exchangeName == null)
-        {
-            throw new ConfigurationMessageBusException($"The {nameof(RabbitMqConsumerBuilderExtensions.ExchangeBinding)} is not provided on the consumer for message type {consumerSettings.MessageType.Name}");
-        }
-
-        var queueName = consumerSettings.GetQueueName();
-        if (queueName == null)
-        {
-            throw new ConfigurationMessageBusException($"The {nameof(RabbitMqConsumerBuilderExtensions.Queue)} is not provided on the consumer for message type {consumerSettings.MessageType.Name}");
-        }
-
-        base.AssertConsumerSettings(consumerSettings);
-    }
-
-    protected override void AssertRequestResponseSettings()
-    {
-        if (Settings.RequestResponse != null)
-        {
-            var exchangeName = Settings.RequestResponse.Path;
-            if (exchangeName == null)
-            {
-                throw new ConfigurationMessageBusException($"The {nameof(RabbitMqRequestResponseBuilderExtensions.ReplyToExchange)} is not provided on the {nameof(MessageBusBuilder.ExpectRequestResponses)}()");
-            }
-
-            var queueName = Settings.RequestResponse.GetQueueName();
-            if (queueName == null)
-            {
-                throw new ConfigurationMessageBusException($"The {nameof(RabbitMqConsumerBuilderExtensions.Queue)} is not provided on the {nameof(MessageBusBuilder.ExpectRequestResponses)}()");
-            }
-        }
-        base.AssertRequestResponseSettings();
-    }
+    protected override IMessageBusSettingsValidationService ValidationService => new RabbitMqMessageBusSettingsValidationService(Settings, ProviderSettings);
 
     protected override void Build()
     {
@@ -181,16 +122,6 @@ public class RabbitMqMessageBus : MessageBusBase<RabbitMqMessageBusSettings>, IR
         {
             _connection.CloseAndDispose();
             _connection = null;
-        }
-    }
-
-    protected override void AssertSettings()
-    {
-        base.AssertSettings();
-
-        if (ProviderSettings.ConnectionFactory is null)
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(RabbitMqMessageBusSettings)}.{nameof(RabbitMqMessageBusSettings.ConnectionFactory)} must be set");
         }
     }
 

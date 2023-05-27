@@ -3,6 +3,7 @@ namespace SlimMessageBus.Host;
 using System.Globalization;
 
 using SlimMessageBus.Host.Consumer;
+using SlimMessageBus.Host.Services;
 
 public abstract class MessageBusBase<TProviderSettings> : MessageBusBase where TProviderSettings : class
 {
@@ -19,6 +20,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
     private readonly ILogger _logger;
     private CancellationTokenSource _cancellationTokenSource = new();
     private IMessageSerializer _serializer;
+    private readonly IMessageHeaderService _headerService;
 
     /// <summary>
     /// Special market reference that signifies a dummy producer settings for response types.
@@ -71,12 +73,10 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
 
     protected MessageBusBase(MessageBusSettings settings)
     {
-        Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        if (settings is null) throw new ArgumentNullException(nameof(settings));
+        if (settings.ServiceProvider is null) throw new ConfigurationMessageBusException($"The bus {Name} has no {nameof(settings.ServiceProvider)} configured");
 
-        if (settings.ServiceProvider is null)
-        {
-            throw new ConfigurationMessageBusException($"The bus {Name} has no {nameof(settings.ServiceProvider)} configured");
-        }
+        Settings = settings;
 
         // Try to resolve from DI, if also not available supress logging using the NullLoggerFactory
         LoggerFactory = settings.ServiceProvider.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance;
@@ -87,6 +87,8 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         MessageTypeResolver = (IMessageTypeResolver)settings.ServiceProvider.GetService(messageTypeResolverType)
             ?? throw new ConfigurationMessageBusException($"The bus {Name} could not resolve the required type {messageTypeResolverType.Name} from {nameof(Settings.ServiceProvider)}");
 
+        _headerService = new MessageHeaderService(LoggerFactory.CreateLogger<MessageHeaderService>(), Settings, MessageTypeResolver);
+
         RuntimeTypeCache = new RuntimeTypeCache();
     }
 
@@ -94,12 +96,15 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         (IMessageSerializer)Settings.ServiceProvider.GetService(Settings.SerializerType)
             ?? throw new ConfigurationMessageBusException($"The bus {Name} could not resolve the required message serializer type {Settings.SerializerType.Name} from {nameof(Settings.ServiceProvider)}");
 
+    protected virtual IMessageBusSettingsValidationService ValidationService { get => new DefaultMessageBusSettingsValidationService(Settings); }
+
     /// <summary>
     /// Called by the provider to initialize the bus.
     /// </summary>
     protected void OnBuildProvider()
     {
-        AssertSettings();
+        ValidationService.AssertSettings();
+
         Build();
 
         if (Settings.AutoStartConsumers)
@@ -210,55 +215,6 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
 
     protected virtual Task OnStart() => Task.CompletedTask;
     protected virtual Task OnStop() => Task.CompletedTask;
-
-    protected virtual void AssertSettings()
-    {
-        AssertProducers();
-        foreach (var consumerSettings in Settings.Consumers)
-        {
-            AssertConsumerSettings(consumerSettings);
-        }
-        AssertDepencendyResolverSettings();
-        AssertRequestResponseSettings();
-    }
-
-    protected virtual void AssertProducers()
-    {
-        var duplicateMessageTypeProducer = Settings.Producers.GroupBy(x => x.MessageType).Where(x => x.Count() > 1).Select(x => x.FirstOrDefault()).FirstOrDefault();
-        if (duplicateMessageTypeProducer != null)
-        {
-            throw new ConfigurationMessageBusException($"The produced message type {duplicateMessageTypeProducer.MessageType} was declared more than once (check the {nameof(MessageBusBuilder.Produce)} configuration)");
-        }
-    }
-
-    protected virtual void AssertConsumerSettings(ConsumerSettings consumerSettings)
-    {
-        if (consumerSettings == null) throw new ArgumentNullException(nameof(consumerSettings));
-
-        Assert.IsNotNull(consumerSettings.Path,
-            () => new ConfigurationMessageBusException($"The {nameof(ConsumerSettings)}.{nameof(consumerSettings.Path)} is not set"));
-        Assert.IsNotNull(consumerSettings.MessageType,
-            () => new ConfigurationMessageBusException($"The {nameof(ConsumerSettings)}.{nameof(consumerSettings.MessageType)} is not set"));
-        Assert.IsNotNull(consumerSettings.ConsumerType,
-            () => new ConfigurationMessageBusException($"The {nameof(ConsumerSettings)}.{nameof(consumerSettings.ConsumerType)} is not set"));
-        Assert.IsNotNull(consumerSettings.ConsumerMethod,
-            () => new ConfigurationMessageBusException($"The {nameof(ConsumerSettings)}.{nameof(consumerSettings.ConsumerMethod)} is not set"));
-    }
-
-    protected virtual void AssertDepencendyResolverSettings()
-    {
-        Assert.IsNotNull(Settings.ServiceProvider,
-            () => new ConfigurationMessageBusException($"The {nameof(MessageBusSettings)}.{nameof(MessageBusSettings.ServiceProvider)} is not set"));
-    }
-
-    protected virtual void AssertRequestResponseSettings()
-    {
-        if (Settings.RequestResponse != null)
-        {
-            Assert.IsNotNull(Settings.RequestResponse.Path,
-                () => new ConfigurationMessageBusException("Request-response: path was not set"));
-        }
-    }
 
     protected void AssertActive()
     {
@@ -383,7 +339,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         var messageHeaders = CreateHeaders();
         if (messageHeaders != null)
         {
-            AddMessageHeaders(messageHeaders, headers, message, producerSettings);
+            _headerService.AddMessageHeaders(messageHeaders, headers, message, producerSettings);
         }
 
         var serviceProvider = currentServiceProvider ?? Settings.ServiceProvider;
@@ -414,32 +370,6 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
 
         _logger.LogDebug("Producing message {Message} of type {MessageType} to path {Path}", message, producerSettings.MessageType, path);
         return ProduceToTransport(message, path, payload, messageHeaders, cancellationToken);
-    }
-
-    private void AddMessageHeaders(IDictionary<string, object> messageHeaders, IDictionary<string, object> headers, object message, ProducerSettings producerSettings)
-    {
-        if (headers != null)
-        {
-            // Add user specific headers
-            foreach (var (key, value) in headers)
-            {
-                messageHeaders[key] = value;
-            }
-        }
-
-        AddMessageTypeHeader(message, messageHeaders);
-        // Call header hook
-        producerSettings.HeaderModifier?.Invoke(messageHeaders, message);
-        // Call header hook
-        Settings.HeaderModifier?.Invoke(messageHeaders, message);
-    }
-
-    private void AddMessageTypeHeader(object message, IDictionary<string, object> headers)
-    {
-        if (message != null)
-        {
-            headers.SetHeader(MessageHeaders.MessageType, MessageTypeResolver.ToName(message.GetType()));
-        }
     }
 
     /// <summary>
@@ -485,7 +415,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         var requestHeaders = CreateHeaders();
         if (requestHeaders != null)
         {
-            AddMessageHeaders(requestHeaders, headers, request, producerSettings);
+            _headerService.AddMessageHeaders(requestHeaders, headers, request, producerSettings);
             if (requestId != null)
             {
                 requestHeaders.SetHeader(ReqRespMessageHeaders.RequestId, requestId);
@@ -557,7 +487,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         if (requestHeaders != null)
         {
             requestHeaders.SetHeader(ReqRespMessageHeaders.ReplyTo, Settings.RequestResponse.Path);
-            AddMessageTypeHeader(request, requestHeaders);
+            _headerService.AddMessageTypeHeader(request, requestHeaders);
         }
 
         return ProduceToTransport(request, path, requestPayload, requestHeaders);
@@ -583,7 +513,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
             throw new MessageBusException($"The header {ReqRespMessageHeaders.ReplyTo} was missing on the message");
         }
 
-        AddMessageTypeHeader(response, responseHeaders);
+        _headerService.AddMessageTypeHeader(response, responseHeaders);
 
         var responsePayload = response != null
             ? Serializer.Serialize(responseType, response)
@@ -710,7 +640,6 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
 
     public Task<TResponse> Send<TResponse, TRequest>(TRequest request, string path = null, IDictionary<string, object> headers = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
         => ProduceSend<TResponse>(request, timeout, path, headers, currentServiceProvider: null, cancellationToken);
-
 
     #endregion
 

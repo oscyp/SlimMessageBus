@@ -2,6 +2,10 @@ namespace SlimMessageBus.Host.Kafka;
 
 using System.Diagnostics.CodeAnalysis;
 
+using SlimMessageBus.Host.Services;
+
+using static Confluent.Kafka.ConfigPropertyNames;
+
 using IProducer = Confluent.Kafka.IProducer<byte[], byte[]>;
 using Message = Confluent.Kafka.Message<byte[], byte[]>;
 
@@ -25,6 +29,8 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
 
     public IMessageSerializer HeaderSerializer
         => ProviderSettings.HeaderSerializer ?? Serializer;
+
+    protected override IMessageBusSettingsValidationService ValidationService => new KafkaMessageBusSettingsValidationService(Settings, ProviderSettings);
 
     protected override void Build()
     {
@@ -110,40 +116,13 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
         _logger.LogInformation("Group consumers starting...");
         foreach (var groupConsumer in _groupConsumers)
         {
-            groupConsumer.Start();
+            await groupConsumer.Start();
         }
         _logger.LogInformation("Group consumers started");
     }
 
     private void AddGroupConsumer(string group, IReadOnlyCollection<string> topics, Func<TopicPartition, IKafkaCommitController, IKafkaPartitionConsumer> processorFactory)
         => _groupConsumers.Add(new KafkaGroupConsumer(this, group, topics, processorFactory));
-
-    protected override void AssertSettings()
-    {
-        base.AssertSettings();
-
-        if (string.IsNullOrEmpty(ProviderSettings.BrokerList))
-        {
-            throw new ConfigurationMessageBusException(Settings, $"The {nameof(KafkaMessageBusSettings)}.{nameof(KafkaMessageBusSettings.BrokerList)} must be set");
-        }
-
-        foreach (var consumer in Settings.Consumers)
-        {
-            Assert.IsTrue(consumer.GetGroup() != null,
-                () => new ConfigurationMessageBusException($"Consumer ({consumer.MessageType}): group was not provided"));
-        }
-
-        if (Settings.RequestResponse != null)
-        {
-            Assert.IsTrue(Settings.RequestResponse.GetGroup() != null,
-                () => new ConfigurationMessageBusException("Request-response: group was not provided"));
-
-            if (Settings.Consumers.Any(x => x.GetGroup() == Settings.RequestResponse.GetGroup() && x.Path == Settings.RequestResponse.Path))
-            {
-                throw new ConfigurationMessageBusException("Request-response: cannot use topic that is already being used by a consumer");
-            }
-        }
-    }
 
     #region Overrides of BaseMessageBus
 
