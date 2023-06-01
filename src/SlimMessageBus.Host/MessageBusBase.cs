@@ -21,6 +21,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
     private CancellationTokenSource _cancellationTokenSource = new();
     private IMessageSerializer _serializer;
     private readonly IMessageHeaderService _headerService;
+    private readonly List<AbstractConsumer> _consumers = new();
 
     /// <summary>
     /// Special market reference that signifies a dummy producer settings for response types.
@@ -58,9 +59,11 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
 
     #endregion
 
-    #region Start & Stop
+    private readonly object _initTaskLock = new();
 
-    protected Task BeforeStartTask { get; set; } = Task.CompletedTask;
+    private Task _initTask = null;
+
+    #region Start & Stop
 
     public bool IsStarted { get; private set; }
 
@@ -70,6 +73,8 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
     #endregion
 
     public virtual string Name => Settings.Name ?? "Main";
+
+    public IReadOnlyCollection<AbstractConsumer> Consumers => _consumers;
 
     protected MessageBusBase(MessageBusSettings settings)
     {
@@ -90,6 +95,34 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         _headerService = new MessageHeaderService(LoggerFactory.CreateLogger<MessageHeaderService>(), Settings, MessageTypeResolver);
 
         RuntimeTypeCache = new RuntimeTypeCache();
+    }
+
+    protected void AddInit(Task task)
+    {
+        lock (_initTaskLock)
+        {
+            var prevInitTask = _initTask;
+            _initTask = prevInitTask != null
+                ? prevInitTask.ContinueWith(_ => task)
+                : task;
+        }
+    }
+
+    protected async Task EnsureInitFinished()
+    {
+        var initTask = _initTask;
+        if (initTask != null)
+        {
+            await initTask.ConfigureAwait(false);
+
+            lock (_initTaskLock)
+            {
+                if (ReferenceEquals(_initTask, initTask))
+                {
+                    _initTask = null;
+                }
+            }
+        }
     }
 
     protected virtual IMessageSerializer GetSerializer() =>
@@ -114,7 +147,7 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
             {
                 try
                 {
-                    await Start();
+                    await Start().ConfigureAwait(false);
                 }
                 catch (Exception e)
                 {
@@ -153,30 +186,6 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         return producerByBaseMessageType;
     }
 
-    public async Task Start()
-    {
-        if (!IsStarted && !IsStarting)
-        {
-            IsStarting = true;
-            try
-            {
-                await BeforeStartTask;
-
-                _logger.LogInformation("Starting consumers for {BusName} bus...", Name);
-                await OnBusLifecycle(MessageBusLifecycleEventType.Starting);
-                await OnStart();
-                await OnBusLifecycle(MessageBusLifecycleEventType.Started);
-                _logger.LogInformation("Started consumers for {BusName} bus", Name);
-
-                IsStarted = true;
-            }
-            finally
-            {
-                IsStarting = false;
-            }
-        }
-    }
-
     private IEnumerable<IMessageBusLifecycleInterceptor> _lifecycleInterceptors;
 
     private async Task OnBusLifecycle(MessageBusLifecycleEventType eventType)
@@ -191,6 +200,34 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         }
     }
 
+    public async Task Start()
+    {
+        if (!IsStarted && !IsStarting)
+        {
+            IsStarting = true;
+            try
+            {
+                await EnsureInitFinished();
+
+                _logger.LogInformation("Starting consumers for {BusName} bus...", Name);
+                await OnBusLifecycle(MessageBusLifecycleEventType.Starting).ConfigureAwait(false);
+
+                await CreateConsumers();
+                await OnStart().ConfigureAwait(false);
+                await Task.WhenAll(_consumers.Select(x => x.Start())).ConfigureAwait(false);
+
+                await OnBusLifecycle(MessageBusLifecycleEventType.Started).ConfigureAwait(false);
+                _logger.LogInformation("Started consumers for {BusName} bus", Name);
+
+                IsStarted = true;
+            }
+            finally
+            {
+                IsStarting = false;
+            }
+        }
+    }
+
     public async Task Stop()
     {
         if (IsStarted && !IsStopping)
@@ -198,10 +235,16 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
             IsStopping = true;
             try
             {
+                await EnsureInitFinished();
+
                 _logger.LogInformation("Stopping consumers for {BusName} bus...", Name);
-                await OnBusLifecycle(MessageBusLifecycleEventType.Stopping);
-                await OnStop();
-                await OnBusLifecycle(MessageBusLifecycleEventType.Stopped);
+                await OnBusLifecycle(MessageBusLifecycleEventType.Stopping).ConfigureAwait(false);
+
+                await Task.WhenAll(_consumers.Select(x => x.Stop())).ConfigureAwait(false);
+                await OnStop().ConfigureAwait(false);
+                await DestroyConsumers().ConfigureAwait(false);
+
+                await OnBusLifecycle(MessageBusLifecycleEventType.Stopped).ConfigureAwait(false);
                 _logger.LogInformation("Stopped consumers for {BusName} bus", Name);
 
                 IsStarted = false;
@@ -293,7 +336,26 @@ public abstract class MessageBusBase : IDisposable, IAsyncDisposable, IMasterMes
         }
     }
 
+    protected virtual Task CreateConsumers()
+    {
+        _logger.LogInformation("Creating consumers");
+        return Task.CompletedTask;
+    }
+
+    protected virtual async Task DestroyConsumers()
+    {
+        _logger.LogInformation("Destroying consumers");
+
+        foreach (var consumer in _consumers)
+        {
+            await consumer.DisposeSilently("Consumer", _logger).ConfigureAwait(false);
+        }
+        _consumers.Clear();
+    }
+
     #endregion
+
+    protected void AddConsumer(AbstractConsumer consumer) => _consumers.Add(consumer);
 
     public virtual DateTimeOffset CurrentTime => DateTimeOffset.UtcNow;
 

@@ -10,7 +10,6 @@ public class EventHubMessageBus : MessageBusBase<EventHubMessageBusSettings>
     private readonly ILogger _logger;
     private BlobContainerClient _blobContainerClient;
     private SafeDictionaryWrapper<string, EventHubProducerClient> _producerByPath;
-    private List<EhGroupConsumer> _groupConsumers;
 
     protected internal BlobContainerClient BlobContainerClient => _blobContainerClient;
 
@@ -48,37 +47,30 @@ public class EventHubMessageBus : MessageBusBase<EventHubMessageBusSettings>
                 throw;
             }
         });
+   }
 
-        _groupConsumers = new List<EhGroupConsumer>();
+    protected override async Task CreateConsumers()
+    {
+        await base.CreateConsumers();
 
-        _logger.LogInformation("Creating consumers");
         foreach (var (groupPath, consumerSettings) in Settings.Consumers.GroupBy(x => new GroupPath(path: x.Path, group: x.GetGroup())).ToDictionary(x => x.Key, x => x.ToList()))
         {
             _logger.LogInformation("Creating consumer for Path: {Path}, Group: {Group}", groupPath.Path, groupPath.Group);
-            _groupConsumers.Add(new EhGroupConsumer(this, groupPath, groupPathPartition => new EhPartitionConsumerForConsumers(this, consumerSettings, groupPathPartition)));
+            AddConsumer(new EhGroupConsumer(this, groupPath, groupPathPartition => new EhPartitionConsumerForConsumers(this, consumerSettings, groupPathPartition)));
         }
 
         if (Settings.RequestResponse != null)
         {
             var pathGroup = new GroupPath(Settings.RequestResponse.Path, Settings.RequestResponse.GetGroup());
             _logger.LogInformation("Creating response consumer for Path: {Path}, Group: {Group}", pathGroup.Path, pathGroup.Group);
-            _groupConsumers.Add(new EhGroupConsumer(this, pathGroup, groupPathPartition => new EhPartitionConsumerForResponses(this, Settings.RequestResponse, groupPathPartition)));
+            AddConsumer(new EhGroupConsumer(this, pathGroup, groupPathPartition => new EhPartitionConsumerForResponses(this, Settings.RequestResponse, groupPathPartition)));
         }
+
     }
 
     protected override async ValueTask DisposeAsyncCore()
     {
         await base.DisposeAsyncCore();
-
-        if (_groupConsumers != null)
-        {
-            foreach (var groupConsumer in _groupConsumers)
-            {
-                await groupConsumer.DisposeSilently("Consumer", _logger);
-            }
-            _groupConsumers.Clear();
-            _groupConsumers = null;
-        }
 
         if (_producerByPath != null)
         {
@@ -108,14 +100,6 @@ public class EventHubMessageBus : MessageBusBase<EventHubMessageBusSettings>
                 _logger.LogWarning(e, "Attempt to create blob container {BlobContainer} failed - the blob container is needed to store the consumer group offsets", _blobContainerClient.Name);
             }
         }
-
-        await Task.WhenAll(_groupConsumers.Select(x => x.Start()));
-    }
-
-    protected override async Task OnStop()
-    {
-        await base.OnStop();
-        await Task.WhenAll(_groupConsumers.Select(x => x.Stop()));
     }
 
     protected override async Task ProduceToTransport(object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders, CancellationToken cancellationToken)

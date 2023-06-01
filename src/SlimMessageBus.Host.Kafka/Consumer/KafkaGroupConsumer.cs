@@ -5,8 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using ConsumeResult = ConsumeResult<Ignore, byte[]>;
 using IConsumer = IConsumer<Ignore, byte[]>;
 
-// ToDo: Use AbstractConsumer
-public class KafkaGroupConsumer : AbstractConsumer, IAsyncDisposable, IKafkaCommitController
+public class KafkaGroupConsumer : AbstractConsumer, IKafkaCommitController
 {
     private readonly SafeDictionaryWrapper<TopicPartition, IKafkaPartitionConsumer> _processors;
 
@@ -52,12 +51,6 @@ public class KafkaGroupConsumer : AbstractConsumer, IAsyncDisposable, IKafkaComm
         // dispose the consumer
         _consumer?.DisposeSilently("consumer", Logger);
         _consumer = null;
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-
-        GC.SuppressFinalize(this);
     }
 
     #endregion

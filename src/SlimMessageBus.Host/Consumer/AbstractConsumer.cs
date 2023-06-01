@@ -1,6 +1,6 @@
 ﻿namespace SlimMessageBus.Host;
 
-public abstract class AbstractConsumer : IAsyncDisposable
+public abstract class AbstractConsumer : IAsyncDisposable, IConsumerControl
 {
     private CancellationTokenSource _cancellationTokenSource;
     private bool _starting;

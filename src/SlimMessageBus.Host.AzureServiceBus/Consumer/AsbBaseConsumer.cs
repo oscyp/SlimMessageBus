@@ -1,6 +1,6 @@
 ﻿namespace SlimMessageBus.Host.AzureServiceBus.Consumer;
 
-public abstract class AsbBaseConsumer : AbstractConsumer, IConsumerControl
+public abstract class AsbBaseConsumer : AbstractConsumer
 {
     private ServiceBusProcessor _serviceBusProcessor;
     private ServiceBusSessionProcessor _serviceBusSessionProcessor;
@@ -112,6 +112,7 @@ public abstract class AsbBaseConsumer : AbstractConsumer, IConsumerControl
     protected override async Task OnStop()
     {
         Logger.LogInformation("Stopping consumer for Path: {Path}, SubscriptionName: {SubscriptionName}", TopicSubscription.Path, TopicSubscription.SubscriptionName);
+
         if (_serviceBusProcessor != null)
         {
             await _serviceBusProcessor.StopProcessingAsync().ConfigureAwait(false);

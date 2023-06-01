@@ -8,7 +8,7 @@ public class MemoryMessageBus : MessageBusBase<MemoryMessageBusSettings>
     private readonly ILogger _logger;
     private IDictionary<string, IMessageProcessor<object>> _consumersByPath;
 
-    public MemoryMessageBus(MessageBusSettings settings, MemoryMessageBusSettings providerSettings) 
+    public MemoryMessageBus(MessageBusSettings settings, MemoryMessageBusSettings providerSettings)
         : base(settings, providerSettings)
     {
         _logger = LoggerFactory.CreateLogger<MemoryMessageBus>();
@@ -75,7 +75,7 @@ public class MemoryMessageBus : MessageBusBase<MemoryMessageBusSettings>
 
     protected override Task ProduceToTransport(object message, string path, byte[] messagePayload, IDictionary<string, object> messageHeaders = null, CancellationToken cancellationToken = default)
         => Task.CompletedTask; // Not used
-    
+
     public override Task ProduceResponse(string requestId, object request, IReadOnlyDictionary<string, object> requestHeaders, object response, Exception responseException, IMessageTypeConsumerInvokerSettings consumerInvoker)
         => Task.CompletedTask; // Not used to responses
 

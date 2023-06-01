@@ -2,10 +2,6 @@ namespace SlimMessageBus.Host.Kafka;
 
 using System.Diagnostics.CodeAnalysis;
 
-using SlimMessageBus.Host.Services;
-
-using static Confluent.Kafka.ConfigPropertyNames;
-
 using IProducer = Confluent.Kafka.IProducer<byte[], byte[]>;
 using Message = Confluent.Kafka.Message<byte[], byte[]>;
 
@@ -17,7 +13,6 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
 {
     private readonly ILogger _logger;
     private IProducer _producer;
-    private readonly IList<KafkaGroupConsumer> _groupConsumers = new List<KafkaGroupConsumer>();
 
     public KafkaMessageBus(MessageBusSettings settings, KafkaMessageBusSettings providerSettings)
         : base(settings, providerSettings)
@@ -36,8 +31,8 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
     {
         base.Build();
 
-        CreateProducer();
-        CreateGroupConsumers();
+        _logger.LogInformation("Creating producers");
+        _producer = CreateProducerInternal();
     }
 
     public void Flush()
@@ -60,18 +55,17 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
         return producer;
     }
 
-    private void CreateProducer()
+    protected override async Task CreateConsumers()
     {
-        _logger.LogInformation("Creating producer...");
-        _producer = CreateProducerInternal();
-        _logger.LogInformation("Created producer {Count}", _producer.Name);
-    }
-
-    private void CreateGroupConsumers()
-    {
-        _logger.LogInformation("Creating group consumers...");
+        await base.CreateConsumers();
 
         var responseConsumerCreated = false;
+
+        void AddGroupConsumer(string group, IReadOnlyCollection<string> topics, Func<TopicPartition, IKafkaCommitController, IKafkaPartitionConsumer> processorFactory)
+        {
+            _logger.LogInformation("Creating consumer group {ConsumerGroup}", group);
+            AddConsumer(new KafkaGroupConsumer(this, group, topics, processorFactory));
+        }
 
         IKafkaPartitionConsumer ResponseProcessorFactory(TopicPartition tp, IKafkaCommitController cc) => new KafkaPartitionConsumerForResponses(LoggerFactory, Settings.RequestResponse, Settings.RequestResponse.GetGroup(), tp, cc, this, HeaderSerializer);
 
@@ -105,41 +99,15 @@ public class KafkaMessageBus : MessageBusBase<KafkaMessageBusSettings>
         {
             AddGroupConsumer(Settings.RequestResponse.GetGroup(), new[] { Settings.RequestResponse.Path }, ResponseProcessorFactory);
         }
-
-        _logger.LogInformation("Created {ConsumerGroupCount} group consumers", _groupConsumers.Count);
     }
-
-    protected async override Task OnStart()
-    {
-        await base.OnStart();
-
-        _logger.LogInformation("Group consumers starting...");
-        foreach (var groupConsumer in _groupConsumers)
-        {
-            await groupConsumer.Start();
-        }
-        _logger.LogInformation("Group consumers started");
-    }
-
-    private void AddGroupConsumer(string group, IReadOnlyCollection<string> topics, Func<TopicPartition, IKafkaCommitController, IKafkaPartitionConsumer> processorFactory)
-        => _groupConsumers.Add(new KafkaGroupConsumer(this, group, topics, processorFactory));
 
     #region Overrides of BaseMessageBus
 
     protected override async ValueTask DisposeAsyncCore()
     {
-        await base.DisposeAsyncCore();
-
         Flush();
 
-        if (_groupConsumers.Count > 0)
-        {
-            foreach (var groupConsumer in _groupConsumers)
-            {
-                await groupConsumer.DisposeSilently(() => $"consumer group {groupConsumer.Group}", _logger);
-            }
-            _groupConsumers.Clear();
-        }
+        await base.DisposeAsyncCore();
 
         if (_producer != null)
         {
