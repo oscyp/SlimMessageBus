@@ -156,8 +156,6 @@ public class KafkaGroupConsumer : AbstractConsumer, IKafkaCommitController
 
     protected override async Task OnStop()
     {
-        await OnStop();
-
         if (_consumerTask == null)
         {
             throw new MessageBusException($"Consumer for group {Group} not yet started");
